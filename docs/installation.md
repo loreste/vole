@@ -1,6 +1,6 @@
 # Installing Vole
 
-Vole compiles to two binaries: `vole` (the server) and `vole-cli` (the command-line client). There's nothing else to install -- no runtime, no shared libraries, no config files you need to create first.
+Vole compiles to two binaries: `vole` (the server) and `vole-cli` (the command-line client). There's nothing else to install -- no runtime, no shared libraries. A config file is optional; Vole runs fine with just CLI flags.
 
 ## From source
 
@@ -47,6 +47,25 @@ If you get `PONG` back, you're in business.
 
 Vole doesn't ship with systemd units or init scripts -- every environment is a little different, and a templated service file tends to cause more confusion than it prevents. Here's a starting point for systemd:
 
+First, create a config file:
+
+```bash
+sudo mkdir -p /etc/vole /var/lib/vole
+sudo cp vole.conf.example /etc/vole/vole.conf
+```
+
+Edit `/etc/vole/vole.conf` to taste. At minimum you'll want to set the listen address and data paths:
+
+```
+addr 0.0.0.0:7379
+appendonly true
+appendfilename /var/lib/vole/vole.aof
+snapshot /var/lib/vole/vole.snap
+snapshot-interval 5m
+```
+
+Then create the service:
+
 ```ini
 [Unit]
 Description=Vole data store
@@ -54,12 +73,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/vole \
-    --addr 0.0.0.0:7379 \
-    --appendonly \
-    --appendfilename /var/lib/vole/vole.aof \
-    --snapshot /var/lib/vole/vole.snap \
-    --snapshot-interval 5m
+ExecStart=/usr/local/bin/vole --config /etc/vole/vole.conf
 Restart=on-failure
 RestartSec=5
 User=vole
@@ -75,7 +89,6 @@ Save that as `/etc/systemd/system/vole.service`, then:
 
 ```bash
 sudo useradd --system --no-create-home vole
-sudo mkdir -p /var/lib/vole
 sudo chown vole:vole /var/lib/vole
 sudo systemctl daemon-reload
 sudo systemctl enable --now vole
@@ -145,7 +158,7 @@ Your data files don't need to change. If we ever make a breaking format change, 
 
 ## Uninstalling
 
-Delete the binaries and your data directory. There's nothing else to clean up -- no config files scattered across your system, no background daemons left behind.
+Delete the binaries, your data directory, and any config file you created. That's everything -- no hidden state, no background daemons left behind.
 
 ```bash
 sudo rm /usr/local/bin/vole /usr/local/bin/vole-cli

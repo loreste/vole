@@ -46,6 +46,10 @@ vole --tls-cert cert.pem --tls-key key.pem --requirepass mysecret
 
 # With memory limits
 vole --maxmemory 536870912 --maxmemory-policy allkeys-lru
+
+# Or use a config file
+cp vole.conf.example /etc/vole/vole.conf
+vole --config /etc/vole/vole.conf
 ```
 
 ## CLI

@@ -235,8 +235,25 @@ vole --snapshot vole.snap --snapshot-interval 5m
 
 Now Vole takes a full snapshot every 5 minutes and trims the AOF. On startup, it loads the snapshot (fast) and replays only the recent AOF entries.
 
+## Using a config file
+
+Once you know which settings you want, you can put them in a file instead of passing flags every time:
+
+```bash
+cp vole.conf.example /etc/vole/vole.conf
+```
+
+Edit the file, then start Vole with:
+
+```bash
+vole --config /etc/vole/vole.conf
+```
+
+Anything you pass as a CLI flag overrides the config file, so you can keep your baseline in the file and tweak things on the fly.
+
 ## Where to go next
 
-- [Configuration guide](configuration.md) -- every flag explained, with examples
+- [Configuration guide](configuration.md) -- every flag and config option explained, with examples
+- [Installation guide](installation.md) -- systemd, Docker, upgrading
 - [README](../README.md) -- full command reference, HTTP API docs, and architecture overview
 - [Contributing](../CONTRIBUTING.md) -- if you want to dig into the code or fix something
