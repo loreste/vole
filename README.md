@@ -59,15 +59,52 @@ vole --config /etc/vole/vole.conf
 ## CLI
 
 ```bash
+# Single commands
 vole-cli SET hello world
 vole-cli GET hello
 
-# Or drop into an interactive shell
+# Connect to a specific host
+vole-cli -h 10.0.0.5 -p 7379 PING
+
+# Interactive shell
 vole-cli
 127.0.0.1:7379> SET user:1 "John"
 OK
 127.0.0.1:7379> GET user:1
 "John"
+127.0.0.1:7379> help
+```
+
+Type `help` in the interactive shell to see every available command grouped by category. Every command Vole supports -- including replication, multi-master, namespaces, scripting, queues, and all the rest -- works directly from the CLI. A few examples:
+
+```bash
+# Replication
+vole-cli REPLICAOF localhost 7380
+vole-cli REPLICAOF NO ONE
+vole-cli MULTIMASTER ENABLE
+vole-cli MULTIMASTER STATUS
+
+# Namespaces
+vole-cli NAMESPACE CREATE staging
+vole-cli NAMESPACE USE staging
+
+# Queues
+vole-cli ENQUEUE tasks '{"type":"email"}'
+vole-cli DEQUEUE tasks TIMEOUT 10
+
+# JSON
+vole-cli JSON.SET user:1 '$' '{"name":"Alice","age":30}'
+vole-cli JSON.GET user:1 '$.name'
+
+# Rate limiting
+vole-cli RATELIMIT api:user:42 100 60
+
+# Time-series
+vole-cli TS.ADD metrics:cpu '*' 72.5
+
+# Cluster management
+vole-cli CLUSTER MEET host2:7380
+vole-cli CLUSTER NODES
 ```
 
 ---

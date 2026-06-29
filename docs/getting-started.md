@@ -26,6 +26,8 @@ You'll get an interactive prompt:
 127.0.0.1:7379>
 ```
 
+If you ever need a reminder of what's available, type `help`. It lists every command grouped by category -- strings, hashes, lists, queues, JSON, time-series, replication, multi-master, the whole lot.
+
 Try a few things:
 
 ```

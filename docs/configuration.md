@@ -244,10 +244,21 @@ vole --addr :7379
 vole --addr :7380 --replicaof localhost:7379
 ```
 
-The follower is read-only. Writes get rejected with `READONLY`. You can promote a follower to a standalone server at runtime:
+The follower is read-only. Writes get rejected with `READONLY`. You can manage replication from the CLI:
 
-```
-REPLICAOF NO ONE
+```bash
+# Start following
+vole-cli REPLICAOF localhost 7379
+
+# Check status
+vole-cli INFO
+
+# Promote to standalone
+vole-cli REPLICAOF NO ONE
+
+# Or enable multi-master so both nodes accept writes
+vole-cli MULTIMASTER ENABLE
+vole-cli MULTIMASTER STATUS
 ```
 
 Or start following from the CLI:
