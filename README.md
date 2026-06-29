@@ -4,7 +4,7 @@
 
 Vole is an in-memory data store that compiles to a single binary with no external dependencies. It speaks the RESP wire protocol, which means every existing client library already works with it -- Go, Python, Node, Java, Ruby, you name it. Just point your client at Vole and go.
 
-But Vole isn't just another key-value store. We got tired of stitching together five different systems just to handle caching, queues, rate limiting, pub/sub, and time-series data. So we put all of it in one place.
+But Vole isn't just another key-value store. We got tired of stitching together five different systems just to handle caching, queues, rate limiting, pub/sub, and time-series data. So we put all of it in one place -- with native multi-node multi-master replication built in, so every node in your cluster can accept writes without a single point of failure.
 
 ## The problems we got tired of solving the hard way
 
@@ -17,6 +17,8 @@ But Vole isn't just another key-value store. We got tired of stitching together 
 **"I need an HTTP endpoint for this."** Start Vole with `--http-addr :8080` and every operation is available as a JSON API. No client library required. `curl` works fine.
 
 **"Keys just vanish and nobody knows."** When a key expires in most stores, it's just gone. Vole can fire a webhook or publish a pub/sub event when that happens, so your app can actually react to it.
+
+**"If the primary goes down, writes stop."** Most data stores give you leader-follower replication -- one node handles writes, the rest are read-only copies. If the leader dies, you're scrambling to promote a follower. Vole has native multi-master replication. Every node accepts writes. Changes propagate to all peers automatically. Lose a node? The others keep going. No election, no downtime, no manual promotion. Start two nodes with `--multimaster` and they stay in sync.
 
 **"I have staging and production data in the same instance."** Named namespaces. `NAMESPACE CREATE staging`, `NAMESPACE USE staging`. Keys are completely isolated. No more prefixing everything with `env:`.
 
