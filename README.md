@@ -47,6 +47,10 @@ vole --tls-cert cert.pem --tls-key key.pem --requirepass mysecret
 # With memory limits
 vole --maxmemory 536870912 --maxmemory-policy allkeys-lru
 
+# Multi-master replication (both nodes accept writes)
+vole --addr :7379 --node-id node1 --peers "node2@localhost:7380" --multimaster
+vole --addr :7380 --node-id node2 --peers "node1@localhost:7379" --multimaster
+
 # Or use a config file
 cp vole.conf.example /etc/vole/vole.conf
 vole --config /etc/vole/vole.conf
@@ -341,7 +345,11 @@ On startup: load snapshot, then replay AOF. After each snapshot, the AOF is trun
 
 ## Replication
 
-Leader-follower. A follower connects, gets a full snapshot, then streams every write from the leader.
+Vole supports two replication modes: leader-follower and multi-master.
+
+### Leader-follower
+
+One node is the leader, the rest are read-only followers. A follower connects, gets a full snapshot, then streams every write from the leader.
 
 ```bash
 vole --addr :7379                            # leader
@@ -356,6 +364,45 @@ REPLICAOF NO ONE            -- stop following, become standalone
 Followers reject writes with `READONLY`. Check `INFO` for replication status.
 
 Worth knowing: replication is asynchronous. There is no automatic failover -- you promote a follower manually. If a follower reconnects, it gets a fresh snapshot (no partial resync).
+
+### Multi-master
+
+Every node accepts writes. Changes propagate to all peers automatically. There's no single point of failure for writes -- if one node goes down, the others keep working.
+
+```bash
+# Start two nodes that replicate to each other
+vole --addr :7379 --node-id node1 --peers "node2@localhost:7380" --multimaster
+vole --addr :7380 --node-id node2 --peers "node1@localhost:7379" --multimaster
+```
+
+Write to either node and the data shows up on the other:
+
+```bash
+# On node 1
+vole-cli -p 7379 SET user:1 Alice
+
+# On node 2 (it's already there)
+vole-cli -p 7380 GET user:1
+# "Alice"
+```
+
+You can also enable it at runtime:
+
+```
+MULTIMASTER ENABLE
+CLUSTER MEET localhost:7380
+```
+
+Monitor the state:
+
+```
+MULTIMASTER STATUS    -- enabled + peer count
+MULTIMASTER PEERS     -- list of connected peers
+```
+
+When a new node joins, it receives a snapshot from an existing peer if its store is empty, then starts streaming live writes in both directions. Writes from peers are applied locally but never re-propagated, so there are no infinite loops.
+
+Worth knowing: multi-master replication is asynchronous. If two nodes write to the same key at the same instant, the last write to arrive wins. There is no conflict merging -- it's last-writer-wins.
 
 ---
 
@@ -514,7 +561,7 @@ Also configurable at runtime via `CONFIG SET`.
 
 ### Replication
 
-`REPLICAOF` `SLAVEOF`
+`REPLICAOF` `SLAVEOF` `MULTIMASTER ENABLE` `MULTIMASTER DISABLE` `MULTIMASTER STATUS` `MULTIMASTER PEERS`
 
 ### Cluster
 
@@ -548,7 +595,8 @@ These are accepted so clients don't break, but they don't do much:
 | `--requirepass` | _(none)_ | Client password |
 | `--tls-cert` | _(none)_ | TLS certificate |
 | `--tls-key` | _(none)_ | TLS private key |
-| `--replicaof` | _(none)_ | Leader address |
+| `--replicaof` | _(none)_ | Leader address (leader-follower mode) |
+| `--multimaster` | `false` | Enable multi-master replication |
 | `--node-id` | _(auto)_ | Cluster node ID |
 | `--peers` | _(none)_ | Cluster peers |
 

@@ -44,7 +44,7 @@ func main() {
 		}
 		applyDefaults(cfg, addr, data, appendOnly, appendFilename, appendFsync,
 			snapshot, snapshotInterval, nodeID, peers, maxMemory, maxMemoryPolicy,
-			httpAddr, password, tlsCert, tlsKey, replicaOf)
+			httpAddr, password, tlsCert, tlsKey, replicaOf, multimaster)
 		log.Printf("loaded config from %s", *configPath)
 	}
 
@@ -118,7 +118,7 @@ func applyDefaults(cfg map[string]string,
 	addr, data *string, appendOnly *bool, appendFilename, appendFsync *string,
 	snapshot *string, snapshotInterval *time.Duration,
 	nodeID, peers *string, maxMemory *int64, maxMemoryPolicy *string,
-	httpAddr, password, tlsCert, tlsKey, replicaOf *string,
+	httpAddr, password, tlsCert, tlsKey, replicaOf *string, multimaster *bool,
 ) {
 	set := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -146,6 +146,10 @@ func applyDefaults(cfg map[string]string,
 	if v, ok := cfg["appendonly"]; ok && !set["appendonly"] {
 		lower := strings.ToLower(v)
 		*appendOnly = lower == "true" || lower == "yes" || lower == "1"
+	}
+	if v, ok := cfg["multimaster"]; ok && !set["multimaster"] {
+		lower := strings.ToLower(v)
+		*multimaster = lower == "true" || lower == "yes" || lower == "1"
 	}
 	if v, ok := cfg["maxmemory"]; ok && !set["maxmemory"] {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {

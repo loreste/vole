@@ -53,8 +53,12 @@ maxmemory-policy noeviction
 
 # ---- Replication ----
 
-# Follow a leader. Format: host:port. Leave commented out to run as leader.
+# Follow a leader (read-only). Format: host:port. Leave commented out to run as leader.
 # replicaof localhost:7379
+
+# Multi-master replication. Every node accepts writes and propagates to peers.
+# Cannot be used together with replicaof.
+# multimaster true
 
 # ---- Cluster ----
 

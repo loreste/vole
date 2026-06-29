@@ -295,6 +295,29 @@ CLUSTER MEET host2:7380
 CLUSTER FORGET <node-id>
 ```
 
+### `--multimaster`
+
+**Default:** `false`
+
+Turns on multi-master replication. Every node in the cluster accepts writes, and changes propagate to all peers automatically.
+
+```bash
+vole --addr :7379 --node-id node1 --peers "node2@localhost:7380" --multimaster
+```
+
+When enabled, Vole connects to every known peer and sets up bidirectional write streaming. If a new node is added via `CLUSTER MEET`, it's automatically connected.
+
+You can also toggle it at runtime:
+
+```
+MULTIMASTER ENABLE
+MULTIMASTER DISABLE
+```
+
+Multi-master uses last-writer-wins for conflict resolution. If two nodes write to the same key at the same time, whichever write arrives last takes precedence. There's no merge or conflict detection -- keep that in mind when designing your key scheme.
+
+You can run multi-master alongside `--peers` but not alongside `--replicaof` (a node can't be both a read-only follower and a multi-master peer).
+
 ### How clustering works in practice
 
 Each key maps to one of 16,384 slots via CRC32 hashing. Each node owns a contiguous range of slots. When you send a command for a key that lives on a different node, you get back:
@@ -360,5 +383,6 @@ That gives you:
 | `--tls-cert` | _(none)_ | TLS certificate path |
 | `--tls-key` | _(none)_ | TLS private key path |
 | `--replicaof` | _(none)_ | Leader address (`host:port`) |
+| `--multimaster` | `false` | Enable multi-master replication |
 | `--node-id` | _(auto)_ | Cluster node ID |
 | `--peers` | _(none)_ | Cluster peer list |
