@@ -52,12 +52,12 @@ func parseOptions(args []string) (options, error) {
 	fs.StringVar(&opts.host, "h", opts.host, "server host")
 	fs.StringVar(&opts.port, "p", opts.port, "server port")
 	fs.BoolVar(&opts.raw, "raw", false, "print bulk strings without quotes")
-	db := fs.Int("n", 0, "database number, accepted for redis-cli compatibility")
+	db := fs.Int("n", 0, "database number, accepted for compatibility")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
 	if *db != 0 {
-		return options{}, errors.New("database selection is not supported yet")
+		return options{}, errors.New("database selection is not supported, use NAMESPACE instead")
 	}
 	if opts.addr == "" {
 		opts.addr = net.JoinHostPort(opts.host, opts.port)
@@ -113,8 +113,13 @@ func repl(addr string, raw bool) error {
 		if line == "" {
 			continue
 		}
-		if strings.EqualFold(line, "quit") || strings.EqualFold(line, "exit") {
+		lower := strings.ToLower(line)
+		if lower == "quit" || lower == "exit" {
 			return nil
+		}
+		if lower == "help" {
+			printHelp()
+			continue
 		}
 		args, err := splitArgs(line)
 		if err != nil {
@@ -222,17 +227,6 @@ func isStreamingCommand(args []string) bool {
 	return false
 }
 
-func isBlockingCommand(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	switch strings.ToUpper(args[0]) {
-	case "BLPOP", "BRPOP", "DEQUEUE":
-		return true
-	}
-	return false
-}
-
 func printValue(w io.Writer, v resp.Value, raw bool, indent int) {
 	pad := strings.Repeat("  ", indent)
 	switch v.Type {
@@ -271,6 +265,62 @@ func printValue(w io.Writer, v resp.Value, raw bool, indent int) {
 			printValue(w, item, raw, 0)
 		}
 	}
+}
+
+func printHelp() {
+	help := `Vole CLI commands:
+
+  Strings       GET SET MGET MSET INCR INCRBY DECR DECRBY APPEND STRLEN
+                GETSET GETEX GETDEL GETRANGE SETRANGE SETNX SETEX PSETEX
+
+  Hashes        HSET HGET HGETALL HDEL HEXISTS HKEYS HVALS HLEN HINCRBY
+                HSETNX HRANDFIELD HSEARCH
+
+  Lists         LPUSH RPUSH LPOP RPOP LRANGE LLEN LINDEX LSET LINSERT
+                LPOS LREM BLPOP BRPOP RPOPLPUSH LMOVE
+
+  Sets          SADD SREM SMEMBERS SISMEMBER SCARD SRANDMEMBER SMOVE SPOP
+                SINTER SUNION SDIFF SINTERSTORE SUNIONSTORE SDIFFSTORE
+
+  Sorted Sets   ZADD ZRANGE ZRANGEBYSCORE ZRANGEBYLEX ZREVRANGE ZREM ZSCORE
+                ZCARD ZRANK ZREVRANK ZCOUNT ZPOPMIN ZPOPMAX ZINCRBY
+
+  Streams       XADD XRANGE XREAD XLEN XTRIM XINFO XGROUP XREADGROUP
+                XACK XCLAIM XAUTOCLAIM XPENDING
+
+  JSON          JSON.SET JSON.GET JSON.DEL JSON.TYPE JSON.NUMINCRBY
+                JSON.ARRAPPEND JSON.ARRLEN JSON.KEYS
+
+  Time-Series   TS.ADD TS.RANGE TS.GET TS.INFO TS.DOWNSAMPLE
+
+  Queues        ENQUEUE DEQUEUE QACK QNACK QPEEK QLEN QINFO QDEAD
+
+  Rate Limit    RATELIMIT RATELIMIT.PEEK RATELIMIT.RESET
+
+  Tags          TAG TAGGET TAGDEL TAGQUERY
+  Search        HSEARCH
+  Schemas       SCHEMA.SET SCHEMA.GET SCHEMA.DEL SCHEMA.LIST
+  Scheduled     SET key val AFTER n / SETDELAYED key val seconds
+
+  Pub/Sub       PUBLISH SUBSCRIBE PSUBSCRIBE
+  Webhooks      WEBHOOK REGISTER/LIST/UNREGISTER
+  Namespaces    NAMESPACE CREATE/USE/LIST/DROP/CURRENT
+  Scripting     EVAL EVALSHA SCRIPT LOAD/EXISTS/FLUSH
+  Cron          CRON.ADD CRON.DEL CRON.LIST CRON.INFO
+  Audit         AUDIT AUDIT.SEARCH AUDIT.ENABLE AUDIT.DISABLE
+
+  Keys          DEL EXISTS TYPE KEYS SCAN RENAME COPY SORT EXPIRE TTL
+                PERSIST DBSIZE FLUSHDB RANDOMKEY OBJECT
+
+  Transactions  MULTI EXEC DISCARD WATCH UNWATCH
+
+  Cluster       CLUSTER MEET/FORGET/NODES/SLOTS/INFO/MYID/RESET/KEYSLOT
+  Replication   REPLICAOF / SLAVEOF / MULTIMASTER ENABLE/DISABLE/STATUS
+  Server        PING INFO SAVE BGSAVE CONFIG AUTH CLIENT SLOWLOG TIME
+
+  Type 'quit' or 'exit' to close the session.
+`
+	fmt.Print(help)
 }
 
 func splitArgs(line string) ([]string, error) {

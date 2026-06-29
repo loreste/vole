@@ -50,16 +50,9 @@ func TestIsStreamingCommand(t *testing.T) {
 	}
 }
 
-func TestIsBlockingCommand(t *testing.T) {
-	if !isBlockingCommand([]string{"BLPOP", "list", "0"}) {
-		t.Fatal("expected BLPOP to be blocking")
-	}
-	if !isBlockingCommand([]string{"dequeue", "myqueue", "TIMEOUT", "5"}) {
-		t.Fatal("expected DEQUEUE to be blocking")
-	}
-	if isBlockingCommand([]string{"GET", "key"}) {
-		t.Fatal("GET should not be blocking")
-	}
+func TestHelpDoesNotPanic(t *testing.T) {
+	// Just make sure printHelp doesn't crash.
+	printHelp()
 }
 
 func TestMovedAddress(t *testing.T) {
