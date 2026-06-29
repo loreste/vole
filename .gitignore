@@ -1,0 +1,34 @@
+# Binaries (root only, not cmd/ directories)
+/vole
+/vole-cli
+*.exe
+
+# Data files
+*.aof
+*.snap
+*.rdb.json
+*.tmp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# AI / tooling config (not part of the project)
+.claude/
+CLAUDE.md
+.cursorrules
+
+# Go
+vendor/
+
+# Test artifacts
+*.test
+*.out
+coverage.html

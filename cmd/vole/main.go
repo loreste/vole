@@ -1,0 +1,93 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"vole/internal/server"
+)
+
+func main() {
+	addr := flag.String("addr", "127.0.0.1:7379", "TCP listen address")
+	data := flag.String("data", "", "compatibility alias for -appendfilename")
+	appendOnly := flag.Bool("appendonly", true, "enable append-only persistence")
+	appendFilename := flag.String("appendfilename", "vole.aof", "append-only persistence file")
+	appendFsync := flag.String("appendfsync", server.FsyncEverySec, "append-only fsync policy: always, everysec, or no")
+	snapshot := flag.String("snapshot", "vole.rdb.json", "snapshot file path")
+	snapshotInterval := flag.Duration("snapshot-interval", 0, "automatic snapshot interval, for example 60s; 0 disables periodic snapshots")
+	nodeID := flag.String("node-id", "", "stable cluster node ID")
+	peers := flag.String("peers", "", "comma-separated peer list as nodeID@host:port")
+	maxMemory := flag.Int64("maxmemory", 0, "max memory in bytes (0 = unlimited)")
+	maxMemoryPolicy := flag.String("maxmemory-policy", "noeviction", "eviction policy: noeviction, allkeys-random, volatile-random, allkeys-lru")
+	httpAddr := flag.String("http-addr", "", "HTTP API listen address (e.g. :8080), empty to disable")
+	password := flag.String("requirepass", "", "require password for client connections")
+	tlsCert := flag.String("tls-cert", "", "TLS certificate file path")
+	tlsKey := flag.String("tls-key", "", "TLS private key file path")
+	replicaOf := flag.String("replicaof", "", "replicate from this address (host:port)")
+	flag.Parse()
+
+	if *data != "" {
+		*appendFilename = *data
+	}
+	if *snapshotInterval < 0 {
+		log.Fatal("snapshot-interval must be >= 0")
+	}
+	if *appendFsync != server.FsyncAlways && *appendFsync != server.FsyncEverySec && *appendFsync != server.FsyncNo {
+		log.Fatal("appendfsync must be always, everysec, or no")
+	}
+	opts := server.Options{
+		Addr:             *addr,
+		AOFPath:          *appendFilename,
+		AppendOnly:       *appendOnly,
+		AppendFsync:      *appendFsync,
+		SnapshotPath:     *snapshot,
+		SnapshotInterval: time.Duration(*snapshotInterval),
+		NodeID:           *nodeID,
+		Peers:            *peers,
+		MaxMemory:        *maxMemory,
+		MaxMemoryPolicy:  *maxMemoryPolicy,
+		HTTPAddr:         *httpAddr,
+		Password:         *password,
+		TLSCert:          *tlsCert,
+		TLSKey:           *tlsKey,
+	}
+	srv, err := server.NewWithOptions(opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer srv.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if *replicaOf != "" {
+		parts := strings.SplitN(*replicaOf, ":", 2)
+		if len(parts) != 2 {
+			log.Fatal("replicaof must be host:port")
+		}
+		if err := srv.ReplicaOf(ctx, *replicaOf); err != nil {
+			log.Fatalf("failed to start replication: %v", err)
+		}
+	}
+
+	if *httpAddr != "" {
+		httpSrv := server.NewHTTPServer(srv, *httpAddr)
+		go func() {
+			log.Printf("vole HTTP API listening on %s", *httpAddr)
+			if err := httpSrv.ListenAndServe(ctx); err != nil {
+				log.Printf("HTTP server error: %v", err)
+			}
+		}()
+	}
+
+	server.LogStartup(*addr, srv.Cluster(), opts)
+	if err := srv.ListenAndServe(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
