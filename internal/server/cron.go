@@ -94,22 +94,26 @@ func (cm *CronManager) Get(name string) (*CronJob, bool) {
 // Run checks all jobs and executes any that are due. Called every minute.
 func (cm *CronManager) Run(now time.Time, exec func([]string) error) {
 	cm.mu.Lock()
-	defer cm.mu.Unlock()
+	var toRun []*CronJob
 	for _, job := range cm.jobs {
 		if matchesCron(job.parsed, now) {
 			job.RunCount++
 			job.LastRun = now
-			// Execute in goroutine to not block the ticker
-			cmd := append([]string(nil), job.Command...)
-			go func(j *CronJob) {
-				if err := exec(cmd); err != nil {
-					cm.mu.Lock()
-					j.LastError = err.Error()
-					cm.mu.Unlock()
-					log.Printf("cron %q failed: %v", j.Name, err)
-				}
-			}(job)
+			toRun = append(toRun, job)
 		}
+	}
+	cm.mu.Unlock()
+
+	for _, job := range toRun {
+		cmd := append([]string(nil), job.Command...)
+		go func(j *CronJob) {
+			if err := exec(cmd); err != nil {
+				cm.mu.Lock()
+				j.LastError = err.Error()
+				cm.mu.Unlock()
+				log.Printf("cron %q failed: %v", j.Name, err)
+			}
+		}(job)
 	}
 }
 

@@ -85,7 +85,11 @@ type Store struct {
 	notBefore map[string]time.Time
 
 	// Key change notification callback
-	onChange func(event, key, namespace string)
+	onChange      func(event, key, namespace string)
+	onChangeQueue chan func()
+
+	// Shutdown support
+	stopOnce sync.Once
 
 	// Eviction support
 	maxMemory        int64  // max memory in bytes, 0 = unlimited
@@ -114,28 +118,29 @@ type listWaitResult struct {
 
 func New() *Store {
 	return &Store{
-		kv:           make(map[string]Value),
-		hashes:       make(map[string]map[string]string),
-		lists:        make(map[string]*Deque),
-		sets:         make(map[string]map[string]struct{}),
-		zsets:        make(map[string]*SortedSet),
-		streams:      make(map[string][]StreamEntry),
-		hlls:         make(map[string]*HyperLogLog),
-		jsons:        make(map[string]*JSONDoc),
-		groups:       make(map[string]map[string]*ConsumerGroup),
-		expires:      make(map[string]time.Time),
-		lastSeq:      make(map[string]int64),
-		waits:        make(map[string][]*waiter),
-		listWaits:    make(map[string][]*listWaiter),
-		stopExpiry:   make(chan struct{}),
-		keyVersion:   make(map[string]uint64),
-		accessTime:   make(map[string]int64),
-		rateLimiters: make(map[string]*RateLimiter),
-		notBefore:    make(map[string]time.Time),
-		tags:         make(map[string]map[string]string),
-		timeseries:   make(map[string]*TimeSeries),
-		queues:       make(map[string]*Queue),
-		queueWaits:   make(map[string][]*waiter),
+		kv:            make(map[string]Value),
+		hashes:        make(map[string]map[string]string),
+		lists:         make(map[string]*Deque),
+		sets:          make(map[string]map[string]struct{}),
+		zsets:         make(map[string]*SortedSet),
+		streams:       make(map[string][]StreamEntry),
+		hlls:          make(map[string]*HyperLogLog),
+		jsons:         make(map[string]*JSONDoc),
+		groups:        make(map[string]map[string]*ConsumerGroup),
+		expires:       make(map[string]time.Time),
+		lastSeq:       make(map[string]int64),
+		waits:         make(map[string][]*waiter),
+		listWaits:     make(map[string][]*listWaiter),
+		stopExpiry:    make(chan struct{}),
+		keyVersion:    make(map[string]uint64),
+		accessTime:    make(map[string]int64),
+		rateLimiters:  make(map[string]*RateLimiter),
+		notBefore:     make(map[string]time.Time),
+		tags:          make(map[string]map[string]string),
+		timeseries:    make(map[string]*TimeSeries),
+		queues:        make(map[string]*Queue),
+		queueWaits:    make(map[string][]*waiter),
+		onChangeQueue: make(chan func(), 4096),
 	}
 }
 
@@ -160,8 +165,14 @@ func (s *Store) touchKeyLocked(keys ...string) {
 		s.keyVersion[key] = s.version
 	}
 	if s.onChange != nil {
+		fn := s.onChange
 		for _, key := range keys {
-			s.onChange("set", key, "")
+			k := key // capture
+			select {
+			case s.onChangeQueue <- func() { fn("set", k, "") }:
+			default:
+				// queue full, drop event
+			}
 		}
 	}
 	if s.maxMemory > 0 {
@@ -199,6 +210,12 @@ func (s *Store) KeysModifiedSince(versions map[string]uint64) bool {
 // StartExpiry spawns a background goroutine that periodically samples expired
 // keys and deletes them. At most 100 keys are sampled per cycle.
 func (s *Store) StartExpiry(interval time.Duration) {
+	// Drain onChange events asynchronously.
+	go func() {
+		for fn := range s.onChangeQueue {
+			fn()
+		}
+	}()
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -227,16 +244,51 @@ func (s *Store) sampleExpired() {
 			// Fire "expired" before "del" so subscribers can distinguish
 			// expiration from explicit deletion.
 			if s.onChange != nil {
-				s.onChange("expired", key, "")
+				fn := s.onChange
+				k := key
+				select {
+				case s.onChangeQueue <- func() { fn("expired", k, "") }:
+				default:
+				}
 			}
 			s.deleteKeyLocked(key)
+		}
+	}
+
+	// Clean up stale rate limiters (no requests in 2x their window)
+	for key, rl := range s.rateLimiters {
+		if len(rl.Requests) == 0 {
+			delete(s.rateLimiters, key)
+			continue
+		}
+		newest := rl.Requests[len(rl.Requests)-1]
+		if now.Sub(newest) > rl.Window*2 {
+			delete(s.rateLimiters, key)
+		}
+	}
+
+	// Clean up expired notBefore entries
+	for key, nb := range s.notBefore {
+		if now.After(nb) {
+			delete(s.notBefore, key)
+		}
+	}
+
+	// Clean up tags for keys that no longer exist
+	for key := range s.tags {
+		if !s.existsLocked(key) {
+			delete(s.tags, key)
 		}
 	}
 }
 
 // StopExpiry signals the background expiry goroutine to stop.
+// Safe to call multiple times.
 func (s *Store) StopExpiry() {
-	close(s.stopExpiry)
+	s.stopOnce.Do(func() {
+		close(s.stopExpiry)
+		close(s.onChangeQueue)
+	})
 }
 
 // isExpiredRLocked checks if a key is expired WITHOUT deleting it.
@@ -2379,12 +2431,16 @@ func (s *Store) Wait(streams []string, timeout time.Duration) {
 	defer s.removeWaiter(streams, w)
 
 	if timeout <= 0 {
-		<-w.ch
+		select {
+		case <-w.ch:
+		case <-s.stopExpiry:
+		}
 		return
 	}
 	select {
 	case <-w.ch:
 	case <-time.After(timeout):
+	case <-s.stopExpiry:
 	}
 }
 
@@ -2450,13 +2506,19 @@ func (s *Store) BPop(keys []string, timeout time.Duration, left bool) (string, s
 	defer s.removeListWaiter(keys, w)
 
 	if timeout <= 0 {
-		result := <-w.ch
-		return result.key, result.value, true
+		select {
+		case result := <-w.ch:
+			return result.key, result.value, true
+		case <-s.stopExpiry:
+			return "", "", false
+		}
 	}
 	select {
 	case result := <-w.ch:
 		return result.key, result.value, true
 	case <-time.After(timeout):
+		return "", "", false
+	case <-s.stopExpiry:
 		return "", "", false
 	}
 }
@@ -3399,7 +3461,12 @@ func (s *Store) deleteKeyLocked(key string) {
 	s.accessMu.Unlock()
 	// Fire "del" before touchKeyLocked which would fire "set".
 	if s.onChange != nil {
-		s.onChange("del", key, "")
+		fn := s.onChange
+		k := key
+		select {
+		case s.onChangeQueue <- func() { fn("del", k, "") }:
+		default:
+		}
 	}
 	s.touchKeyLockedNoEvent(key)
 }

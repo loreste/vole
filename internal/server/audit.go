@@ -68,9 +68,11 @@ func (al *AuditLog) Record(key, command, client string, args []string) {
 		Client:    client,
 	}
 	al.entries = append(al.entries, entry)
-	// Trim if over max size
+	// Trim if over max size — copy to new slice to release old backing array
 	if al.maxSize > 0 && len(al.entries) > al.maxSize {
-		al.entries = al.entries[len(al.entries)-al.maxSize:]
+		trimmed := make([]AuditEntry, al.maxSize)
+		copy(trimmed, al.entries[len(al.entries)-al.maxSize:])
+		al.entries = trimmed
 	}
 }
 

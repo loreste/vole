@@ -43,8 +43,11 @@ func (sl *SlowLog) Record(duration time.Duration, command []string, client strin
 		Client:    client,
 	}
 	sl.entries = append(sl.entries, entry)
+	// Copy to new slice to release old backing array
 	if len(sl.entries) > sl.maxLen {
-		sl.entries = sl.entries[len(sl.entries)-sl.maxLen:]
+		trimmed := make([]SlowLogEntry, sl.maxLen)
+		copy(trimmed, sl.entries[len(sl.entries)-sl.maxLen:])
+		sl.entries = trimmed
 	}
 }
 

@@ -85,26 +85,39 @@ func (p *PubSub) PUnsubscribe(pattern string, ch chan PSubMessage) {
 // It returns the total number of clients that received the message.
 func (p *PubSub) Publish(channel, message string) int {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	n := 0
-	// Direct subscribers
+	// Copy direct subscribers
+	directSubs := make([]chan string, 0, len(p.subs[channel]))
 	for ch := range p.subs[channel] {
+		directSubs = append(directSubs, ch)
+	}
+	// Copy pattern subscribers
+	type psub struct {
+		ch      chan PSubMessage
+		pattern string
+	}
+	var patternSubs []psub
+	for pattern, subscribers := range p.psubs {
+		if store.MatchGlob(pattern, channel) {
+			for ch := range subscribers {
+				patternSubs = append(patternSubs, psub{ch: ch, pattern: pattern})
+			}
+		}
+	}
+	p.mu.RUnlock()
+
+	n := 0
+	for _, ch := range directSubs {
 		select {
 		case ch <- message:
 			n++
 		default:
 		}
 	}
-	// Pattern subscribers
-	for pattern, subscribers := range p.psubs {
-		if store.MatchGlob(pattern, channel) {
-			for ch := range subscribers {
-				select {
-				case ch <- PSubMessage{Pattern: pattern, Channel: channel, Data: message}:
-					n++
-				default:
-				}
-			}
+	for _, ps := range patternSubs {
+		select {
+		case ps.ch <- PSubMessage{Pattern: ps.pattern, Channel: channel, Data: message}:
+			n++
+		default:
 		}
 	}
 	return n

@@ -483,7 +483,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 
 		// For commands that return key names, strip the namespace prefix from output
-		if nsPrefix != "" && (cmd == "KEYS" || cmd == "RANDOMKEY") {
+		if nsPrefix != "" && (cmd == "KEYS" || cmd == "RANDOMKEY" || cmd == "SCAN") {
 			handled := true
 			switch cmd {
 			case "KEYS":
@@ -506,6 +506,51 @@ func (s *Server) handleConn(conn net.Conn) {
 						_ = wr.Null()
 					} else {
 						_ = wr.Bulk(stripKeyPrefix(keys[0], nsPrefix))
+					}
+				}
+			case "SCAN":
+				if len(args) < 2 {
+					_ = wr.Error("ERR wrong number of arguments for 'scan' command")
+				} else {
+					cursor, cerr := strconv.Atoi(args[1])
+					if cerr != nil {
+						_ = wr.Error("ERR invalid cursor")
+					} else {
+						pattern := "*"
+						count := 10
+						scanErr := false
+						for i := 2; i < len(args); i += 2 {
+							if i+1 >= len(args) {
+								_ = wr.Error("ERR syntax error")
+								scanErr = true
+								break
+							}
+							switch strings.ToUpper(args[i]) {
+							case "MATCH":
+								pattern = args[i+1]
+							case "COUNT":
+								n, ne := strconv.Atoi(args[i+1])
+								if ne != nil {
+									_ = wr.Error("ERR value is not an integer or out of range")
+									scanErr = true
+								} else {
+									count = n
+								}
+							}
+							if scanErr {
+								break
+							}
+						}
+						if !scanErr {
+							next, keys := s.store.Scan(cursor, count, pattern)
+							stripped := make([]string, len(keys))
+							for i, k := range keys {
+								stripped[i] = stripKeyPrefix(k, nsPrefix)
+							}
+							_ = wr.ArrayLen(2)
+							_ = wr.Bulk(strconv.Itoa(next))
+							_ = writeBulkStrings(wr, stripped)
+						}
 					}
 				}
 			default:

@@ -36,6 +36,7 @@ type ReplicationState struct {
 
 // Replica represents a connected follower.
 type Replica struct {
+	mu          sync.Mutex
 	Addr        string
 	Conn        net.Conn
 	Writer      *resp.Writer
@@ -79,14 +80,21 @@ func (rs *ReplicationState) ReplicaCount() int {
 // PropagateToReplicas sends a write command to all connected replicas.
 func (rs *ReplicationState) PropagateToReplicas(args []string) {
 	rs.mu.RLock()
-	defer rs.mu.RUnlock()
-	for addr, r := range rs.replicas {
-		if err := r.Writer.Command(args); err != nil {
-			log.Printf("replication: failed to propagate to %s: %v", addr, err)
-			continue
+	replicas := make([]*Replica, 0, len(rs.replicas))
+	for _, r := range rs.replicas {
+		replicas = append(replicas, r)
+	}
+	rs.mu.RUnlock()
+
+	for _, r := range replicas {
+		r.mu.Lock()
+		err := r.Writer.Command(args)
+		if err == nil {
+			err = r.Writer.Flush()
 		}
-		if err := r.Writer.Flush(); err != nil {
-			log.Printf("replication: flush failed for %s: %v", addr, err)
+		r.mu.Unlock()
+		if err != nil {
+			log.Printf("replication: propagate to %s failed: %v", r.Addr, err)
 		}
 	}
 }

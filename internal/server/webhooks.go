@@ -21,6 +21,7 @@ type WebhookManager struct {
 	mu     sync.RWMutex
 	hooks  map[string][]string // "event:pattern" -> webhook URLs
 	client *http.Client
+	sem    chan struct{} // concurrency limiter
 }
 
 // NewWebhookManager creates a ready-to-use WebhookManager.
@@ -28,6 +29,7 @@ func NewWebhookManager() *WebhookManager {
 	return &WebhookManager{
 		hooks:  make(map[string][]string),
 		client: &http.Client{Timeout: 5 * time.Second},
+		sem:    make(chan struct{}, 64), // max 64 concurrent deliveries
 	}
 }
 
@@ -73,9 +75,10 @@ func (wm *WebhookManager) List() map[string][]string {
 // match. Delivery is asynchronous (fire-and-forget).
 func (wm *WebhookManager) Fire(event, key string) {
 	wm.mu.RLock()
-	defer wm.mu.RUnlock()
 
-	for hookKey, urls := range wm.hooks {
+	// Collect matching URLs under lock, then release before sending.
+	var urls []string
+	for hookKey, hookURLs := range wm.hooks {
 		parts := splitWebhookKey(hookKey)
 		if parts[0] != event && parts[0] != "*" {
 			continue
@@ -83,8 +86,19 @@ func (wm *WebhookManager) Fire(event, key string) {
 		if parts[1] != "*" && !store.MatchGlob(parts[1], key) {
 			continue
 		}
-		for _, u := range urls {
-			go wm.send(u, event, key)
+		urls = append(urls, hookURLs...)
+	}
+	wm.mu.RUnlock()
+
+	for _, u := range urls {
+		select {
+		case wm.sem <- struct{}{}:
+			go func(url string) {
+				defer func() { <-wm.sem }()
+				wm.send(url, event, key)
+			}(u)
+		default:
+			log.Printf("webhook: dropping delivery to %s (at capacity)", u)
 		}
 	}
 }

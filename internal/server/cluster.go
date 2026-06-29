@@ -177,6 +177,7 @@ func (c *Cluster) pingPeers() {
 					} else {
 						c.nodes[i].State = NodeFailing
 					}
+					break
 				}
 			}
 		}(peer)
