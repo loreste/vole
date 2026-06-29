@@ -237,6 +237,155 @@ vole --snapshot vole.snap --snapshot-interval 5m
 
 Now Vole takes a full snapshot every 5 minutes and trims the AOF. On startup, it loads the snapshot (fast) and replays only the recent AOF entries.
 
+## Multi-master replication
+
+This is where Vole gets interesting. Most data stores make you pick one node that handles writes and the rest are read-only copies. If the writer goes down, you're stuck doing a manual promotion while your app throws errors.
+
+Vole doesn't work that way. Every node can accept writes, and they all stay in sync.
+
+### Setting it up
+
+You need at least two nodes. They can be on the same machine (different ports) or on different servers. Each node needs a stable ID so the others can recognize it.
+
+**Terminal 1 -- start the first node:**
+
+```bash
+vole --addr :7379 --node-id node1 --peers "node2@localhost:7380" --multimaster
+```
+
+**Terminal 2 -- start the second node:**
+
+```bash
+vole --addr :7380 --node-id node2 --peers "node1@localhost:7379" --multimaster
+```
+
+That's it. They find each other, exchange data, and start streaming writes in both directions.
+
+### Verify it works
+
+Write something on node 1:
+
+```bash
+vole-cli -p 7379 SET greeting "hello from node 1"
+```
+
+Read it on node 2:
+
+```bash
+vole-cli -p 7380 GET greeting
+# "hello from node 1"
+```
+
+Now write on node 2:
+
+```bash
+vole-cli -p 7380 SET farewell "goodbye from node 2"
+```
+
+And read it on node 1:
+
+```bash
+vole-cli -p 7379 GET farewell
+# "goodbye from node 2"
+```
+
+Both nodes accept writes. Both nodes have all the data.
+
+### Adding a third node
+
+You can add nodes at any time without stopping the cluster. Start the third node:
+
+```bash
+vole --addr :7381 --node-id node3 --multimaster
+```
+
+Then tell it about an existing node:
+
+```bash
+vole-cli -p 7381 CLUSTER MEET localhost:7379
+vole-cli -p 7381 MULTIMASTER ENABLE
+```
+
+The new node gets a snapshot from the peer and starts streaming. You can also do this from any existing node:
+
+```bash
+vole-cli -p 7379 CLUSTER MEET localhost:7381
+```
+
+### Check the cluster state
+
+From any node:
+
+```bash
+vole-cli -p 7379 MULTIMASTER STATUS
+# 1) "enabled"
+# 2) "true"
+# 3) "peers"
+# 4) (integer) 2
+
+vole-cli -p 7379 MULTIMASTER PEERS
+# Lists each connected peer with its ID and address
+
+vole-cli -p 7379 CLUSTER NODES
+# Shows all nodes, their slot ranges, and health state
+```
+
+### On different machines
+
+Same thing, just use real hostnames or IPs instead of localhost:
+
+```bash
+# Machine A (10.0.0.1)
+vole --addr 0.0.0.0:7379 --node-id node1 \
+  --peers "node2@10.0.0.2:7379,node3@10.0.0.3:7379" --multimaster
+
+# Machine B (10.0.0.2)
+vole --addr 0.0.0.0:7379 --node-id node2 \
+  --peers "node1@10.0.0.1:7379,node3@10.0.0.3:7379" --multimaster
+
+# Machine C (10.0.0.3)
+vole --addr 0.0.0.0:7379 --node-id node3 \
+  --peers "node1@10.0.0.1:7379,node2@10.0.0.2:7379" --multimaster
+```
+
+### Using a config file
+
+For production, you'd probably put this in a config file rather than passing a dozen flags:
+
+```
+# /etc/vole/vole.conf
+addr 0.0.0.0:7379
+node-id node1
+peers node2@10.0.0.2:7379,node3@10.0.0.3:7379
+multimaster true
+
+appendonly true
+appendfilename /var/lib/vole/vole.aof
+snapshot /var/lib/vole/vole.snap
+snapshot-interval 5m
+```
+
+```bash
+vole --config /etc/vole/vole.conf
+```
+
+### What to expect
+
+- **Writes go everywhere.** A SET on any node shows up on all the others within milliseconds (over a local network).
+- **Nodes can come and go.** If a node goes down, the others keep working. When it comes back, it reconnects and catches up.
+- **Conflicts are last-writer-wins.** If two nodes write to the same key at the same instant, whichever write arrives last takes precedence. There's no merge. Design your key scheme to avoid this -- use node-specific prefixes or UUIDs if concurrent writes to the same key are possible.
+- **Persistence still works.** Each node has its own AOF and snapshots. The data survives restarts on every node independently.
+
+### Disabling multi-master
+
+If you want to go back to standalone or leader-follower mode:
+
+```bash
+vole-cli MULTIMASTER DISABLE
+```
+
+The node keeps its data but stops propagating to and receiving from peers.
+
 ## Using a config file
 
 Once you know which settings you want, you can put them in a file instead of passing flags every time:
