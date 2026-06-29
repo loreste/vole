@@ -571,8 +571,56 @@ func (s *Server) handleReplSync(conn net.Conn, w *resp.Writer) {
 	}
 }
 
+// handleReplPeer handles the internal REPLPEER command for multi-master
+// replication. It sends a snapshot, registers the caller as a replica (so
+// future writes are streamed to it), and initiates a reverse connection
+// back to the peer so that this node also receives the peer's writes.
+func (s *Server) handleReplPeer(conn net.Conn, w *resp.Writer, peerID, peerAddr string) {
+	// Send snapshot.
+	snap := s.store.Dump()
+	data, err := json.Marshal(snap)
+	if err != nil {
+		_ = w.Error("ERR " + err.Error())
+		_ = w.Flush()
+		return
+	}
+	_ = w.Bulk(string(data))
+	_ = w.Flush()
+
+	// Register the caller as a replica so our writes stream to them.
+	s.repl.AddReplica(conn)
+	defer s.repl.RemoveReplica(conn.RemoteAddr().String())
+
+	// Initiate a reverse connection back to the peer (if multi-master is
+	// enabled and we are not already connected).
+	if s.multiMaster.IsEnabled() {
+		s.multiMaster.ConnectToPeer(peerID, peerAddr)
+	}
+
+	// Keep connection alive — read PINGs from peer.
+	rd := resp.NewReader(conn)
+	for {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		args, err := rd.ReadCommand()
+		if err != nil {
+			return
+		}
+		if len(args) > 0 && strings.EqualFold(args[0], "PING") {
+			_ = w.Simple("PONG")
+			_ = w.Flush()
+		}
+	}
+}
+
 // ReplicaOf starts following the given leader address, or stops replication
 // if addr is empty. This is the exported API for use from main.
 func (s *Server) ReplicaOf(ctx context.Context, addr string) error {
 	return s.repl.StartFollowing(ctx, addr, s.store)
+}
+
+// EnableMultiMaster enables multi-master mode and connects to all known
+// cluster peers. This is the exported API for use from main.
+func (s *Server) EnableMultiMaster() {
+	s.multiMaster.Enable()
+	s.multiMaster.ConnectToClusterPeers(s.cluster)
 }

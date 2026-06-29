@@ -33,6 +33,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "TLS certificate file path")
 	tlsKey := flag.String("tls-key", "", "TLS private key file path")
 	replicaOf := flag.String("replicaof", "", "replicate from this address (host:port)")
+	multimaster := flag.Bool("multimaster", false, "enable multi-master replication")
 	flag.Parse()
 
 	// Load config file if given. CLI flags always win.
@@ -89,6 +90,10 @@ func main() {
 		if err := srv.ReplicaOf(ctx, *replicaOf); err != nil {
 			log.Fatalf("failed to start replication: %v", err)
 		}
+	}
+
+	if *multimaster {
+		srv.EnableMultiMaster()
 	}
 
 	if *httpAddr != "" {

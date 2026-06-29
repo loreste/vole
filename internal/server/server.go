@@ -48,6 +48,7 @@ type Server struct {
 	tlsKey           string
 	metrics          *Metrics
 	repl             *ReplicationState
+	multiMaster      *MultiMaster
 	lastSave         time.Time
 	scripts          *ScriptManager
 	clients          *ClientManager
@@ -143,6 +144,7 @@ func NewWithOptions(opts Options) (*Server, error) {
 		tlsKey:           opts.TLSKey,
 		metrics:          NewMetrics(),
 		repl:             NewReplicationState(),
+		multiMaster:      NewMultiMaster(opts.NodeID, opts.Addr, st),
 		scripts:          NewScriptManager(),
 		clients:          NewClientManager(),
 		slowlog:          NewSlowLog(10*time.Millisecond, 128),
@@ -151,6 +153,9 @@ func NewWithOptions(opts Options) (*Server, error) {
 
 func (s *Server) Close() error {
 	log.Println("shutting down: stopping replication...")
+	if s.multiMaster != nil {
+		s.multiMaster.Stop()
+	}
 	if s.repl != nil {
 		s.repl.StopFollowing()
 	}
@@ -327,6 +332,10 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		if cmd == "REPLSYNC" {
 			s.handleReplSync(conn, wr)
+			return
+		}
+		if cmd == "REPLPEER" && len(args) == 3 {
+			s.handleReplPeer(conn, wr, args[1], args[2])
 			return
 		}
 		if cmd == "UNSUBSCRIBE" {
@@ -621,7 +630,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				_ = wr.Simple("QUEUED")
 			} else {
 				if isWriteCommand(cmd) {
-					if s.repl.IsReplica() {
+					if s.repl.IsReplica() && !s.multiMaster.IsEnabled() {
 						_ = wr.Error("READONLY You can't write against a read only replica")
 						break
 					}
@@ -634,8 +643,11 @@ func (s *Server) handleConn(conn net.Conn) {
 				if err := s.exec(wr, args); err != nil {
 					_ = wr.Error("ERR " + err.Error())
 				} else {
-					if isWriteCommand(cmd) && s.repl.Role() == RoleMaster {
-						s.repl.PropagateToReplicas(args)
+					if isWriteCommand(cmd) {
+						if s.repl.Role() == RoleMaster {
+							s.repl.PropagateToReplicas(args)
+						}
+						s.multiMaster.PropagateToAllPeers(args)
 					}
 					if s.audit.Enabled() && isWriteCommand(cmd) {
 						auditKey := ""
@@ -1438,6 +1450,50 @@ func (s *Server) exec(w *resp.Writer, args []string) error {
 			return err
 		}
 		return w.Simple("OK")
+	case "MULTIMASTER":
+		if len(args) < 2 {
+			return wrongArgs(cmd)
+		}
+		switch strings.ToUpper(args[1]) {
+		case "ENABLE":
+			s.multiMaster.Enable()
+			s.multiMaster.ConnectToClusterPeers(s.cluster)
+			return w.Simple("OK")
+		case "DISABLE":
+			s.multiMaster.Disable()
+			return w.Simple("OK")
+		case "STATUS":
+			peerCount := s.multiMaster.PeerCount()
+			enabled := s.multiMaster.IsEnabled()
+			if err := w.ArrayLen(4); err != nil {
+				return err
+			}
+			_ = w.Bulk("enabled")
+			if enabled {
+				_ = w.Bulk("true")
+			} else {
+				_ = w.Bulk("false")
+			}
+			_ = w.Bulk("peers")
+			return w.Int(int64(peerCount))
+		case "PEERS":
+			peers := s.multiMaster.PeerInfo()
+			if err := w.ArrayLen(len(peers)); err != nil {
+				return err
+			}
+			for _, p := range peers {
+				if err := w.ArrayLen(4); err != nil {
+					return err
+				}
+				_ = w.Bulk("id")
+				_ = w.Bulk(p.ID)
+				_ = w.Bulk("addr")
+				_ = w.Bulk(p.Addr)
+			}
+			return nil
+		default:
+			return fmt.Errorf("unsupported MULTIMASTER subcommand %q", args[1])
+		}
 	case "SAVE":
 		if len(args) != 1 {
 			return wrongArgs(cmd)
@@ -5209,8 +5265,18 @@ func (s *Server) clusterCommand(w *resp.Writer, args []string) error {
 		if len(args) != 3 {
 			return wrongArgs("CLUSTER")
 		}
-		if err := s.cluster.Meet(args[2]); err != nil {
+		meetAddr := args[2]
+		if err := s.cluster.Meet(meetAddr); err != nil {
 			return fmt.Errorf("ERR %s", err.Error())
+		}
+		// If multi-master is enabled, connect to the new peer.
+		if s.multiMaster.IsEnabled() {
+			for _, n := range s.cluster.Nodes() {
+				if n.Addr == meetAddr && !n.Self {
+					s.multiMaster.ConnectToPeer(n.ID, n.Addr)
+					break
+				}
+			}
 		}
 		return w.Simple("OK")
 	case "FORGET":
@@ -5296,6 +5362,8 @@ func (s *Server) info(w *resp.Writer) error {
 	if role == RoleReplica {
 		replInfo += fmt.Sprintf("master_host:%s\r\n", s.repl.LeaderAddr())
 	}
+	replInfo += fmt.Sprintf("multimaster_enabled:%v\r\nmultimaster_peers:%d\r\n",
+		s.multiMaster.IsEnabled(), s.multiMaster.PeerCount())
 	return w.Bulk(fmt.Sprintf("# Server\r\nvole_version:0.1.0\r\nnode_id:%s\r\naddr:%s\r\n\r\n# Persistence\r\nappendonly:%d\r\nsnapshot_path:%s\r\n\r\n# Keyspace\r\nkeys:%d\r\nstreams:%d\r\n%s", self.ID, self.Addr, appendOnly, s.snapshotPath, keys, streams, replInfo))
 }
 
