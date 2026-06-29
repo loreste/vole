@@ -36,6 +36,7 @@ type MultiMaster struct {
 	clock    int64 // Lamport clock (atomic)
 	ctx      context.Context
 	cancel   context.CancelFunc
+	wg       sync.WaitGroup // tracks active peerLoop goroutines
 	enabled  bool
 }
 
@@ -108,13 +109,18 @@ func (mm *MultiMaster) ConnectToPeer(nodeID, addr string) error {
 		mm.mu.Unlock()
 		return nil // already connected
 	}
+	// Mark as connecting with a placeholder so no other goroutine starts
+	// a duplicate connection for the same nodeID.
+	mm.peers[nodeID] = &PeerState{ID: nodeID, Addr: addr, Active: false}
 	mm.mu.Unlock()
 
+	mm.wg.Add(1)
 	go mm.peerLoop(nodeID, addr)
 	return nil
 }
 
 func (mm *MultiMaster) peerLoop(nodeID, addr string) {
+	defer mm.wg.Done()
 	for {
 		select {
 		case <-mm.ctx.Done():
@@ -212,9 +218,12 @@ func (mm *MultiMaster) syncWithPeer(nodeID, addr string) error {
 		args, err := rd.ReadCommand()
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				// Send PING to keep alive.
+				// Send PING to keep alive. Lock the peer mutex because
+				// PropagateToAllPeers may be writing concurrently.
+				peer.mu.Lock()
 				_ = w.Command([]string{"PING"})
 				_ = w.Flush()
+				peer.mu.Unlock()
 				continue
 			}
 			return fmt.Errorf("read command: %w", err)
@@ -275,28 +284,45 @@ func (mm *MultiMaster) PeerCount() int {
 	return n
 }
 
+// PeerSummary is a read-only snapshot of a peer for reporting.
+type PeerSummary struct {
+	ID     string
+	Addr   string
+	Active bool
+}
+
 // PeerInfo returns info about connected peers.
-func (mm *MultiMaster) PeerInfo() []PeerState {
+func (mm *MultiMaster) PeerInfo() []PeerSummary {
 	mm.mu.RLock()
 	defer mm.mu.RUnlock()
-	out := make([]PeerState, 0, len(mm.peers))
+	out := make([]PeerSummary, 0, len(mm.peers))
 	for _, p := range mm.peers {
-		out = append(out, PeerState{ID: p.ID, Addr: p.Addr, Active: p.Active})
+		out = append(out, PeerSummary{ID: p.ID, Addr: p.Addr, Active: p.Active})
 	}
 	return out
 }
 
-// Stop shuts down all peer connections.
+// Stop shuts down all peer connections and waits for goroutines to exit.
 func (mm *MultiMaster) Stop() {
 	mm.cancel()
+
+	// Close all peer connections to unblock reads.
 	mm.mu.Lock()
-	defer mm.mu.Unlock()
 	for _, p := range mm.peers {
-		p.Conn.Close()
+		if p.Conn != nil {
+			p.Conn.Close()
+		}
 	}
+	mm.mu.Unlock()
+
+	// Wait for all peerLoop goroutines to finish.
+	mm.wg.Wait()
+
+	mm.mu.Lock()
 	mm.peers = make(map[string]*PeerState)
 	// Reset context so Enable can be called again.
 	mm.ctx, mm.cancel = context.WithCancel(context.Background())
+	mm.mu.Unlock()
 }
 
 // ConnectToClusterPeers connects to all known cluster nodes for replication.
