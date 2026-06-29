@@ -6,14 +6,17 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"vole/internal/config"
 	"vole/internal/server"
 )
 
 func main() {
+	configPath := flag.String("config", "", "path to config file (e.g. /etc/vole/vole.conf)")
 	addr := flag.String("addr", "127.0.0.1:7379", "TCP listen address")
 	data := flag.String("data", "", "compatibility alias for -appendfilename")
 	appendOnly := flag.Bool("appendonly", true, "enable append-only persistence")
@@ -31,6 +34,18 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "TLS private key file path")
 	replicaOf := flag.String("replicaof", "", "replicate from this address (host:port)")
 	flag.Parse()
+
+	// Load config file if given. CLI flags always win.
+	if *configPath != "" {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			log.Fatalf("failed to load config %s: %v", *configPath, err)
+		}
+		applyDefaults(cfg, addr, data, appendOnly, appendFilename, appendFsync,
+			snapshot, snapshotInterval, nodeID, peers, maxMemory, maxMemoryPolicy,
+			httpAddr, password, tlsCert, tlsKey, replicaOf)
+		log.Printf("loaded config from %s", *configPath)
+	}
 
 	if *data != "" {
 		*appendFilename = *data
@@ -89,5 +104,54 @@ func main() {
 	server.LogStartup(*addr, srv.Cluster(), opts)
 	if err := srv.ListenAndServe(ctx); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// applyDefaults fills in flag values from a config file. Flags that were
+// explicitly passed on the command line are left alone.
+func applyDefaults(cfg map[string]string,
+	addr, data *string, appendOnly *bool, appendFilename, appendFsync *string,
+	snapshot *string, snapshotInterval *time.Duration,
+	nodeID, peers *string, maxMemory *int64, maxMemoryPolicy *string,
+	httpAddr, password, tlsCert, tlsKey, replicaOf *string,
+) {
+	set := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	str := func(name string, dst *string) {
+		if v, ok := cfg[name]; ok && !set[name] {
+			*dst = v
+		}
+	}
+
+	str("addr", addr)
+	str("data", data)
+	str("appendfilename", appendFilename)
+	str("appendfsync", appendFsync)
+	str("snapshot", snapshot)
+	str("node-id", nodeID)
+	str("peers", peers)
+	str("maxmemory-policy", maxMemoryPolicy)
+	str("http-addr", httpAddr)
+	str("requirepass", password)
+	str("tls-cert", tlsCert)
+	str("tls-key", tlsKey)
+	str("replicaof", replicaOf)
+
+	if v, ok := cfg["appendonly"]; ok && !set["appendonly"] {
+		lower := strings.ToLower(v)
+		*appendOnly = lower == "true" || lower == "yes" || lower == "1"
+	}
+	if v, ok := cfg["maxmemory"]; ok && !set["maxmemory"] {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			*maxMemory = n
+		}
+	}
+	if v, ok := cfg["snapshot-interval"]; ok && !set["snapshot-interval"] {
+		if v == "0" || v == "" {
+			*snapshotInterval = 0
+		} else if d, err := time.ParseDuration(v); err == nil {
+			*snapshotInterval = d
+		}
 	}
 }

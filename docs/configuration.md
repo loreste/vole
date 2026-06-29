@@ -1,8 +1,30 @@
 # Configuring Vole
 
-Everything is configured through command-line flags. There's no config file to manage. If you need to change something, you change the flags and restart. For a handful of settings, you can also change them at runtime with `CONFIG SET`.
+Vole can be configured with CLI flags, a config file, or a mix of both. CLI flags always take priority over the config file, so you can set your baseline in the file and override individual settings on the fly.
 
-This page walks through each flag, explains what it does, and tells you when you'd actually want to change it.
+A handful of settings can also be changed at runtime with `CONFIG SET` without restarting.
+
+## Config file
+
+Copy the example and edit it:
+
+```bash
+cp vole.conf.example /etc/vole/vole.conf
+```
+
+Then start Vole with:
+
+```bash
+vole --config /etc/vole/vole.conf
+```
+
+The format is one setting per line: `key value`. Lines starting with `#` are comments. See `vole.conf.example` in the repo for a fully commented template.
+
+You can still pass CLI flags alongside `--config`. If a flag shows up in both places, the CLI wins.
+
+## Flag reference
+
+This page walks through each setting, explains what it does, and tells you when you'd actually want to change it.
 
 ## Network
 

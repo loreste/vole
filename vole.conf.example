@@ -1,0 +1,65 @@
+# Vole configuration file
+#
+# Pass this file with: vole --config /etc/vole/vole.conf
+# CLI flags override anything set here.
+#
+# Format: one setting per line, "key value". Lines starting with # are comments.
+# Blank lines are ignored.
+
+# ---- Network ----
+
+# Address to listen on for RESP connections.
+addr 127.0.0.1:7379
+
+# HTTP/JSON API address. Leave commented out to disable.
+# http-addr :8080
+
+# ---- Persistence ----
+
+# Append-only file. Every write is logged here.
+appendonly true
+appendfilename vole.aof
+
+# How often to flush the AOF to disk: always, everysec, or no.
+appendfsync everysec
+
+# Snapshot file path. Set to "" to disable snapshots.
+snapshot vole.snap
+
+# How often to take automatic snapshots. 0 disables periodic snapshots.
+# Examples: 60s, 5m, 1h
+snapshot-interval 5m
+
+# ---- Memory ----
+
+# Maximum memory in bytes. 0 means no limit.
+# maxmemory 536870912
+
+# What to do when maxmemory is reached:
+#   noeviction     - reject writes (default)
+#   allkeys-random - delete random keys
+#   volatile-random - delete random keys that have a TTL
+#   allkeys-lru    - delete least recently used keys
+maxmemory-policy noeviction
+
+# ---- Security ----
+
+# Require clients to AUTH before running commands. Leave commented out for no password.
+# requirepass changeme
+
+# TLS certificate and key. Both must be set to enable TLS.
+# tls-cert /etc/vole/cert.pem
+# tls-key /etc/vole/key.pem
+
+# ---- Replication ----
+
+# Follow a leader. Format: host:port. Leave commented out to run as leader.
+# replicaof localhost:7379
+
+# ---- Cluster ----
+
+# Stable node ID. Auto-generated if not set.
+# node-id node1
+
+# Other nodes in the cluster. Format: id@host:port,id@host:port
+# peers node2@host2:7380,node3@host3:7381
